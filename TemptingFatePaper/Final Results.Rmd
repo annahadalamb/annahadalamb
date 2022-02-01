@@ -1,0 +1,489 @@
+---
+title: "501 Final Project Results"
+output:
+  html_document:
+    df_print: paged
+  pdf_document: default
+---
+
+haveread = replication control condition
+
+control = extension control condition
+
+relprime = religious prime condition
+
+superprime = superstitious prime condition
+
+```{r}
+library(tidyverse)
+library(readxl)
+library(ggpubr)
+library(effsize)
+library(knitr)
+library(tinytex)
+library(ggplot2)
+library(sjPlot)
+library(sjmisc)
+library(sjlabelled)
+library(rstatix)
+library(writexl)
+
+temptfatefinal <- read_excel("~/Desktop/MBDS/BDS 522/Group7_Data_NumericValues.xlsx", 
+    skip = 2)
+
+varnames <- read_excel("~/Desktop/MBDS/BDS 522/Group7_Data_NumericValues.xlsx",
+n_max = 1)
+
+colnames(temptfatefinal) <- colnames(varnames)
+rm(varnames)
+
+#Renamed variables from raw data file. duration, attentioncheck and attentioncheck 2 were variables used to exclude particiapnts. Each condition had a likelihood variable and the corresponding condition is indicated by what comes after the _. I later created a new varaible likelihood (code is below) that combined all the likelihood scorse into one column for analysis purposes. Variables that start with "GRS" are related to the GRS post-intervention survey; those that start with "bigl" correspond to the 14 BIGL items in the post-intervention survey. Have read is a dummy variable for those in the replication control versus everyone else. Prime indciates which condition per observation.
+temptfatefinal_cleaned <- temptfatefinal %>% rename(duration = `Duration (in seconds)`, age = Q1, gender = Q2, religion = Q3, likelihood_haveread = `Q2_1...28`, grs_howreligious = `Q4-1`, grs_relservices = `Q4-2`, attentioncheck = Q39, grs_sacredbook = `Q4-3`, grs_prayoften = `Q4-4`, bigl_1 = `Q1_1`, bigl_2 = `Q1_2`, bigl_3 = `Q1_3`, bigl_4 = `Q1_4`, bigl_5 = `Q1_5`, bigl_6 = `Q1_6`, bigl_7 = `Q1_7`, bigl_8 = `Q1_8`, attentioncheck2 = `Q1_9`, bigl_9 = `Q1_10`, bigl_10 = `Q1_11`, bigl_11 = `Q1_12`, bigl_12 = `Q1_13`, bigl_13 = `Q1_14`, bigl_14 = `Q1_15`, likelihood_notreadcontrol = `Q2_1...62`, likelihood_relprime = `Q2_1...73`, likelihood_superprime = `Q2_1...84`, haveread = `Have read`, prime = Prime)
+
+#check number of people to exclude for failing first attention check
+temptfatefinal_cleaned %>% filter(attentioncheck != 6)
+
+#check number of people to exclude for failing second attention check
+temptfatefinal_cleaned %>% filter(attentioncheck == 6, attentioncheck2 != 2)
+
+#Got rid of unnecessary variables, filtered out those who didn't pass the 2 attention check Q's, and created dummy variables for superstitious and religious prime conditions, and control (but this column currently includes both extension control and replication control groups), i separated the two control groups in code below.  
+temptfatefinal_cleaned2 <- temptfatefinal_cleaned %>% select(duration,  age, gender, religion, grs_howreligious, grs_relservices, attentioncheck, grs_sacredbook, grs_prayoften, bigl_1, bigl_2,  bigl_3, bigl_4, bigl_5, bigl_6, bigl_7, bigl_8, attentioncheck2, bigl_9, bigl_10, bigl_11, bigl_12, bigl_13, bigl_14, likelihood_haveread, likelihood_notreadcontrol, likelihood_relprime, likelihood_superprime, haveread, prime) %>% 
+  filter(attentioncheck == 6,
+         attentioncheck2 == 2) %>% 
+  mutate(superprime = ifelse(prime == "superstitious", 1, 0),
+         relprime = ifelse(prime == "religious", 1, 0),
+         control = ifelse(prime == "control", 1, 0))
+
+#got rid of NA's in each condition's likelihood column
+temptfatefinal_cleaned2[is.na(temptfatefinal_cleaned2)] = 0
+
+#created unique ID for each observation
+temptfatefinal_cleaned2$id <- 1:nrow(temptfatefinal_cleaned2)
+
+```
+
+# Rescore 2 misnumbered GRS files
+
+```{r}
+#rescored 2 GRS questions because the raw data file had misnumbered/skipped over values 
+grscleaned <- temptfatefinal_cleaned2 %>% select(id, grs_howreligious, grs_relservices, grs_sacredbook, grs_prayoften) %>% 
+  mutate(grs1 = case_when(grs_howreligious == 1 ~ 2,
+                          grs_howreligious == 2 ~ 3,
+                          grs_howreligious == 3 ~ 4), 
+         grs2 = case_when(grs_relservices == 1 ~ 1,
+                          grs_relservices == 2 ~ 2,
+                          grs_relservices == 4 ~ 3,
+                          grs_relservices == 5 ~ 4,
+                          grs_relservices == 6 ~ 5,
+                          grs_relservices == 7 ~ 6,
+                          grs_relservices == 8 ~ 7,
+                          grs_relservices == 9 ~ 8,
+                          grs_relservices == 10 ~ 9)) 
+
+#STANDARDIZED THE GRS QUESTIONS because questions had different number of answers to choose from (e.g. one question had 4 choices, another had 9). 
+grsstandardized <- grscleaned %>% select(id, grs1, grs2, grs_sacredbook, grs_prayoften) %>% 
+  mutate(standgrs1 = (grs1 - mean(grs1))/sd(grs1),
+         standgrs2 = (grs2 - mean(grs2))/sd(grs2),
+         standgrs3 = (grs_sacredbook - mean(grs_sacredbook))/sd(grs_sacredbook),
+         standgrs4 = (grs_prayoften - mean(grs_prayoften))/sd(grs_prayoften))
+
+```
+
+# Creating likelihood variable and treatment variable
+
+```{r}
+
+#create one column for 'likelihood of being called on' since each group had its own column
+temptfate <- temptfatefinal_cleaned2 %>% rowwise() %>% 
+  mutate(likelihood = sum(across(starts_with("likelihood")))) 
+
+ungroup(temptfate)
+
+#separated 'not read' from 'have read' 2 control groups. Not read/control is the extension control condition, and have read is the replication control condition. 
+#no one fell outside our time constraints, there were no further exclusions
+temptfate2 <- temptfate %>% mutate(treatment = case_when(
+  control == 1 & haveread == 0 ~ "notread",
+  superprime == 1 ~ "superstitious",
+  relprime == 1 ~ "religious",
+  haveread == 1 ~ "haveread")) %>% 
+  filter(duration <= 3600 & duration >= 30)
+```
+
+# Summary Statistics of likelihood score
+
+```{r}
+#Summary statistics of perceived likelihood by treatment group
+temptfate2 %>% group_by(treatment) %>% summarise(mean = mean(likelihood),
+    median = median(likelihood),
+    sd = sd(likelihood),
+    n())
+
+#summary stats for overall likelihood score (ungrouped)
+temptfate2 %>% ungroup() %>% summarise(mean = mean(likelihood),
+    median = median(likelihood),
+    sd = sd(likelihood))
+
+```
+
+# Graph comparing 4 conditions
+
+```{r}
+#boxplot with the p-values listed on graph
+compare_means(likelihood ~ (treatment), data= temptfate2, method = "wilcox.test", paired = FALSE, adjustment = "holmes")
+
+comparisons <- list( c("superstitious", "notread"), c("religious", "notread"), c("haveread", "notread") )
+
+temptfate2 %>% ggplot(aes(x= (treatment), 
+                          y= likelihood, 
+                          color= treatment,
+                          fill = treatment)) + 
+  geom_boxplot(alpha = 0.3) + 
+  geom_jitter(height = 0.5, width = 0.3) + 
+  stat_compare_means(comparisons = comparisons, 
+                     method = "wilcox.test", 
+                     paired = FALSE) + 
+  labs(x= "Condition", y= "Perceived Likelihood of Negative Outcome") +
+    theme_classic() +  scale_colour_viridis_d(option = "E") + scale_fill_viridis_d(option = "E")
+
+```
+
+# Primary Analysis (Two-Tailed Wilcoxon Tests)
+
+Since we are running three Wilcoxon tests, the null and alternative hypotheses are the same for each test. That is:
+
+**Null Hypothesis:** The medians of the two populations are equal (median1 = median2)
+
+**Alternative Hypothesis:** The medians of the two populations differ (median1 ≠ median2)
+
+## H1: Replication Control vs. Extension Control
+
+The median of the control (have read, no prime) group was 7, whereas the median of Treatment 1 (have not read, no prime) was 6. A Wilcoxon Test revealed a p-value equal to 0.9641. Because this is greater than alpha = 0.05, we fail to reject the null hypothesis.
+
+```{r}
+#NOT READ CONTROL VS READ CONTROL 
+read_notread <- temptfate2 %>% filter(treatment == "haveread" | treatment == "notread")
+
+sum_rednotred <- read_notread %>% group_by(treatment) %>% 
+  summarise(mean = mean(likelihood),
+            median = median(likelihood),
+            sd = sd(likelihood),
+            n())
+
+meanh1 <- read_notread  %>% group_by(treatment) %>% 
+  summarise(mean = mean(likelihood))
+
+read_notread %>% group_by(treatment) %>% get_summary_stats(likelihood, type = "median_iqr")
+
+readvsnotread <- wilcox.test(likelihood ~ treatment,  data = read_notread,  alternative = "two.sided", exact = FALSE, conf.int = TRUE, conf.level = 0.95)
+readvsnotread
+
+#creating boxplot of not read versus read contorl
+compare_means(likelihood ~ (treatment), data= read_notread, method = "wilcox.test", paired = FALSE, adjustment = "holmes")
+
+#forced order so 'not read' is on the left
+read_notread$treatment <- factor(read_notread$treatment, levels=c("notread", "haveread"))
+
+comparisons_readnotread <- list(c("haveread", "notread") )
+
+read_notread %>% ggplot(aes(x= treatment, 
+                          y= likelihood)) + 
+  geom_boxplot(alpha = 0.3) + 
+  geom_jitter(height = 0.2, width = 0.3) + 
+    stat_summary(fun = mean, geom = "errorbar", linetype = "solid", color = "red") +
+  stat_compare_means(comparisons = comparisons_readnotread, 
+                     method = "wilcox.test", 
+                     paired = FALSE) + 
+  labs(x= "Condition", y= "Perceived Likelihood of Negative Outcome") + theme_classic()
+
+read_notread %>% ggplot(aes(x= treatment, 
+                          y= likelihood)) + 
+  geom_boxplot(alpha = 0.3) + 
+  geom_jitter(height = 0.2, width = 0.3) + 
+    stat_summary(fun.y = mean, geom = "errorbar", aes(ymax = ..y.., ymin = ..y..), linetype = "solid", color = "red") +
+  stat_compare_means(comparisons = comparisons_readnotread, 
+                     method = "wilcox.test", 
+                     paired = FALSE) + 
+  labs(x= "Condition", y= "Perceived Likelihood of Negative Outcome") + theme_classic()
+
+
+```
+
+## **H2: Religious Prime vs. Extension Control**
+
+The median of Extension Control was equal to 6, whereas the median of Religious Prime was 3. A Wilcoxon Test revealed a p-value equal to 0.04339. Because this is less than alpha = 0.05, we can reject the null hypothesis. Subjects who received an implicit religious prime were significantly less likely to believe a negative outcome was likely (being called on by the teacher in class) than those who did not receive a prime.
+
+```{r}
+
+rel_notread <- temptfate2 %>% filter(relprime == 1 | treatment == "notread")
+
+rel_notread  %>% group_by(treatment) %>% 
+  summarise(mean = mean(likelihood),
+            median = median(likelihood),
+            sd = sd(likelihood),
+            n())
+
+rel_notread %>% group_by(treatment) %>% get_summary_stats(likelihood, type = "median_iqr")
+
+relvsnotread <- wilcox.test(likelihood ~ treatment, data = rel_notread, alternative = "two.sided", exact = FALSE, conf.int = TRUE, conf.level = 0.95)
+relvsnotread
+
+#creating boxplot of religious prime versus control
+compare_means(likelihood ~ (treatment), data= rel_notread, method = "wilcox.test", paired = FALSE, adjustment = "holmes")
+
+#forced order so 'not read' is on the left
+rel_notread$treatment <- factor(rel_notread$treatment, levels=c("notread", "religious"))
+
+comparisons_rel <- list(c("religious", "notread") )
+
+rel_notread %>% ggplot(aes(x= treatment, 
+                          y= likelihood)) + 
+  geom_boxplot(alpha = 0.3) + 
+  geom_jitter(height = 0.2, width = 0.3) + 
+   stat_summary(fun.y = mean, geom = "errorbar", aes(ymax = ..y.., ymin = ..y..), linetype = "solid", color = "red")+
+  stat_compare_means(comparisons = comparisons_rel, 
+                     method = "wilcox.test", 
+                     paired = FALSE) + 
+  labs(x= "Condition", y= "Perceived Likelihood of Negative Outcome") + theme_classic()
+
+```
+
+## **Hypothesis 3: Superstitious Prime vs. Extension Control**
+
+The median of Treatment 1 was equal to 6, whereas the median of Treatment 3 (superstitious prime) was 7. A Wilcoxon Test revealed a p-value equal to 0.6297. Because this is greater than alpha = 0.05, we fail to reject the null hypothesis.
+
+Our results suggest that increasing the salience of a superstitious worldview does not impact the tempting fate effect, and does not make people more risk averse or risk seeking. This contradicts previous research that found that superstitious primes including words such as "lucky", "destiny" and "meant to be" significantly impacted risk preferences (Nguyen, 2012).
+
+In conclusion, our results suggest that superstitious priming had *no* impact on the perceived likelihood of a negative outcome for having tempted fate (Research Question \#3)
+
+```{r}
+#SUPERSTITIOUS PRIME VS CONTROL
+super_notread <- temptfate2 %>% filter(superprime == 1 | treatment == "notread")
+
+super_notread  %>% group_by(treatment) %>% summarise(mean = mean(likelihood),
+    median = median(likelihood),
+    sd = sd(likelihood),
+    n())
+
+super_notread %>% group_by(treatment) %>% get_summary_stats(likelihood, type = "median_iqr")
+
+supervsnotread <- wilcox.test(likelihood ~ treatment, data = super_notread, alternative = "two.sided", exact = FALSE, conf.int = TRUE, conf.level = 0.95)
+supervsnotread
+
+#creating boxplot of superstitious prime versus control
+compare_means(likelihood ~ (treatment), data= super_notread, method = "wilcox.test", paired = FALSE, adjustment = "holmes")
+
+#forced order so 'not read' is on the left
+super_notread$treatment <-factor(super_notread$treatment, levels=c("notread", "superstitious"))
+
+comparisons_super <- list(c("superstitious", "notread") )
+
+super_notread %>% ggplot(aes(x= treatment, 
+                          y= likelihood)) + 
+  geom_boxplot(alpha = 0.3) + 
+  geom_jitter(height = 0.2, width = 0.3) +  stat_summary(fun.y = mean, geom = "errorbar", aes(ymax = ..y.., ymin = ..y..), linetype = "solid", color = "red") + 
+  stat_compare_means(comparisons = comparisons_super, 
+                     method = "wilcox.test", 
+                     paired = FALSE) + 
+  labs(x= "Condition", y= "Perceived Likelihood of Negative Outcome") + theme_classic()
+
+write_xlsx(super_notread, path = "h3wilcoxon.xlsx")
+
+??errorbar
+
+```
+
+# Calculate the average standardized GRS score
+
+```{r}
+
+grsavg <- grsstandardized %>% select(id, standgrs1, standgrs2, standgrs3, standgrs4) %>% 
+  pivot_longer(cols = starts_with("stand"),
+               names_to = "grs",
+               values_to = "answer") %>% 
+  group_by(id) %>% 
+  mutate(scoregrs = mean(answer)) 
+
+grsavg2 <- grsavg %>% pivot_wider(id_cols = c(id, scoregrs),
+                                  names_from = grs,
+                                  values_from = answer) %>%
+  select(id, scoregrs)
+
+#joined the clean GRS score with the main data set
+temptfate3 <- temptfate2 %>% inner_join(grsavg2, by = "id") %>% 
+  select(id, age, gender, religion, haveread, superprime, relprime, likelihood, treatment, scoregrs, bigl_1, bigl_2, bigl_3, bigl_4, bigl_5, bigl_6, bigl_7, bigl_8, bigl_9, bigl_10, bigl_11, bigl_12, bigl_13, bigl_14)
+```
+
+# Calculate the overall BIGL score (superstitious beliefs)
+
+```{r}
+#REVERSE CODED Q5, Q8, Q14 of BIGL
+biglfixed <- temptfate3 %>% select(id, bigl_1, bigl_2, bigl_3, bigl_4, bigl_5, bigl_6, bigl_7, bigl_8, bigl_9, bigl_10, bigl_11, bigl_12, bigl_13,  bigl_14) %>% 
+  mutate(bigl_5fix = 7 - bigl_5,
+         bigl_8fix = 7 - bigl_8,
+         bigl_14fix = 7 - bigl_14) %>% 
+  select(id, bigl_1, bigl_2, bigl_3, bigl_4, bigl_5fix, bigl_6, bigl_7, bigl_8fix, bigl_9, bigl_10, bigl_11, bigl_12, bigl_13, bigl_14fix)
+
+#Found sum of the 14 BIGL questions to get 'scorebigl'
+biglavg <- biglfixed %>% select(id, starts_with("bigl")) %>% 
+  pivot_longer(cols = starts_with("bigl"),                                                                    names_to = "bigl",                                                                             values_to = "answer") %>% 
+  group_by(id) %>% 
+  mutate(scorebigl = sum(answer)) 
+
+biglavg2 <- biglavg %>% pivot_wider(id_cols = c(id, scorebigl),
+                                  names_from = bigl,
+                                  values_from = answer) %>% 
+  select(id, bigl_5fix,  bigl_8fix, bigl_14fix, scorebigl)
+
+#Joined BIGL score with rest of data set
+#also aggregated the religion variable which was 9 levels to 2, representing those who identify with a religion (christian, buddhist, jewish, muslim, hindu) versus everyone else (atheist, refuse to answer, agnostic, don't know)
+temptfate.biglgrs <- temptfate3 %>% inner_join(biglavg2, by = "id") %>% 
+    select(id, age, gender, religion, haveread, superprime, relprime,  likelihood, treatment, scoregrs, scorebigl) %>% 
+  mutate(theist = ifelse(religion == 1 |
+                         religion == 2 |
+                         religion == 3 |
+                         religion == 4 |
+                         religion == 5, 1, 0))
+
+#cleaned dataset export to excel
+write_xlsx(temptfate.biglgrs, path = "cleaneddata.xlsx")
+
+```
+
+# Robustness Check
+
+We ran multiple linear regression as a robustness check for our Wilcoxon Tests to test if having read or not read for class and the presence of a prime significantly predicted the respondent's perception of the likelihood of a negative outcome, as well as controlling for a subject's religious and superstitious beliefs, age, gender and religion. The overall regression was statistically significant (R^2^ = 0.4896, F(15,226) = 14.46, p \< 0.001). It was found that the religious prime significantly impacted a subject's perception of the likelihood of a negative outcome (b = -1.137715, p = 0.011). Those given the religious prime reported they were less likely to be called on than those who did not receive the prime. We found that a person's superstitious beliefs significantly impacted the outcome as well (b = 0.138, p \< 0.001). That is, the higher they scored on the BIGL survey (i.e. held higher superstitious beliefs), the more likely they believed a negative outcome would result from having tempted fate. The remaining results from the other controls can be found in the table below.
+
+```{r}
+
+#Linear regression with controls of GRS and BIGL scores, gender, and religion (theist vs everyone else)
+robustness <- temptfate.biglgrs %>% select(id, age, gender, theist, haveread, superprime, relprime, scoregrs, scorebigl, likelihood)
+
+robustness
+
+linreg<- summary(lm(likelihood ~ haveread + superprime + relprime + scoregrs + scorebigl + age + factor(gender) + factor(theist), 
+                             data = robustness))
+linreg
+
+tab_model(linreg, collapse.se = TRUE, pred.labels = c("Intercept", "Have read or not", "Superstitious Prime", "Religious Prime",
+                  "GRS Score", "BIGL Score", 
+                  "Age", "Gender(Female)", "Gender(Other)", "Theist"))
+
+write_xlsx(robustness, path = "robustnessdataset.xlsx")
+```
+
+# Secondary Analysis
+
+We wanted to know if a person's superstitious beliefs impacted the effectiveness of the superstitious prime, as well as if a person's religiosity impacted the effectiveness of the religious prime. To do this, we ran a model to test for interaction effects. However our results found no significance for either interaction. That is, the effect of the superstitious prime on the outcome doesn't change as the BIGL score increases, and the effect of the religious prime on the outcome doesn't change as the GRS score increases.
+
+```{r}
+
+lr_bg2 <- summary(lm(likelihood ~ haveread + relprime*scoregrs + superprime*scorebigl + age + factor(gender) + factor(theist), data = robustness))
+lr_bg2
+
+tab_model(lr_bg2, collapse.se = TRUE, pred.labels = c("Intercept", "Have read or not", "Superstitious Prime", "Religious Prime",
+                  "GRS Score", "BIGL Score", 
+                  "Age", "Gender(Female)", "Gender(Other)", "Theist", "Religious Prime & GRS Score Interaction", "Superstitious Prime & BIGL Score Interaction"))
+
+```
+
+# DESCRIPTIVE STATS AND TALLYING EXCLUSIONS
+
+-   age
+
+\- gender
+
+\- religious affiliation (theist vs. everyone else)
+
+\- GRS score: by condition and overall
+
+\- BIGL score: by condition and overall
+
+```{r}
+#DESCRIPTIVE STATS 
+
+temptfatefinal_count <- temptfatefinal_cleaned %>% select(duration,  age, gender, religion, grs_howreligious, grs_relservices, attentioncheck, grs_sacredbook, grs_prayoften, bigl_1, bigl_2,  bigl_3, bigl_4, bigl_5, bigl_6, bigl_7, bigl_8, attentioncheck2, bigl_9, bigl_10, bigl_11, bigl_12, bigl_13, bigl_14, likelihood_haveread, likelihood_notreadcontrol, likelihood_relprime, likelihood_superprime, haveread, prime) %>% 
+  mutate(superprime = ifelse(prime == "superstitious", 1, 0),
+         relprime = ifelse(prime == "religious", 1, 0),
+         control = ifelse(prime == "control", 1, 0))
+
+#got rid of NA's in each condition's likelihood column
+temptfatefinal_count[is.na(temptfatefinal_count)] = 0
+
+temptfatefinal_count2 <- temptfatefinal_count %>% mutate(treatment = case_when(
+  control == 1 & haveread == 0 ~ "notread",
+  superprime == 1 ~ "superstitious",
+  relprime == 1 ~ "religious",
+  haveread == 1 ~ "haveread")) 
+
+#counting number per group before exclusion for analysis
+temptfatefinal_count2 %>% group_by(treatment) %>% summarise(n())
+
+#filter for each group to see how many excluded per attention check question before analysis
+temptfatefinal_count2 %>% filter(treatment == "superstitious", attentioncheck != 6)
+temptfatefinal_count2 %>% filter(treatment == "superstitious", attentioncheck == 6, attentioncheck2 != 2)
+
+temptfatefinal_count2 %>% filter(treatment == "religious", attentioncheck != 6)
+temptfatefinal_count2 %>% filter(treatment == "religious", attentioncheck == 6, attentioncheck2 != 2)
+
+temptfatefinal_count2 %>% filter(treatment == "haveread", attentioncheck != 6)
+temptfatefinal_count2 %>% filter(treatment == "haveread", attentioncheck == 6, attentioncheck2 != 2)
+
+temptfatefinal_count2 %>% filter(treatment == "notread", attentioncheck != 6)
+temptfatefinal_count2 %>% filter(treatment == "notread", attentioncheck == 6, attentioncheck2 != 2)
+
+
+#descriptive stats of age per condition
+temptfate2 %>% group_by(treatment) %>% filter(age <100) %>% summarise(mean = mean(age),
+    median = median(age),
+    sd = sd(age))
+
+temptfate2 %>% ungroup() %>% filter(age <100) %>% summarise(mean = mean(age),
+    median = median(age),
+    sd = sd(age))
+
+#descriptive stats of gender per condition
+tempt_gender <- temptfate.biglgrs %>% mutate(sex = case_when(gender == 1 ~ "male",
+                                      gender == 2 ~ "female",
+                                      gender == 3 ~ "other")) 
+
+table(tempt_gender$sex, tempt_gender$treatment)
+
+#descriptive stats of theist vs. not per condition. Note that 1 = theist (1 of the 5 organized religion choices), and 0 is everyone else
+table(temptfate.biglgrs$theist, temptfate.biglgrs$treatment)
+
+#descriptive stats of GRS scores
+temptfate.biglgrs %>% group_by(treatment) %>% summarise(mean = mean(scoregrs),
+                                                        median = median(scoregrs),
+                                                        sd = sd(scoregrs),
+                                                        min = min(scoregrs),
+                                                        max = max(scoregrs),
+                                                        q1 = quantile(scoregrs, probs = 0.25),
+                                                        q3 = quantile(scoregrs, probs = 0.75))
+
+#descriptive stats of GRS scores, overall stats
+temptfate.biglgrs %>% ungroup() %>% summarise(mean = mean(scoregrs),
+                                                        median = median(scoregrs),
+                                                        sd = sd(scoregrs),
+                                                        min = min(scoregrs),
+                                                        max = max(scoregrs),
+                                                        q1 = quantile(scoregrs, probs = 0.25),
+                                                        q3 = quantile(scoregrs, probs = 0.75))
+
+#descritive stats of BIGL scores
+temptfate.biglgrs %>% group_by(treatment) %>% summarise(mean = mean(scorebigl),
+                                                        median = median(scorebigl),
+                                                        sd = sd(scorebigl),
+                                                        min = min(scorebigl),
+                                                        max = max(scorebigl),
+                                                        q1 = quantile(scorebigl, probs = 0.25),
+                                                        q3 = quantile(scorebigl, probs = 0.75))
+
+#descriptive stats of BIGL scores, overall stats
+temptfate.biglgrs %>% ungroup() %>% summarise(mean = mean(scorebigl),
+                                                        median = median(scorebigl),
+                                                        sd = sd(scorebigl),
+                                                        min = min(scorebigl),
+                                                        max = max(scorebigl),
+                                                        q1 = quantile(scorebigl, probs = 0.25),
+                                                        q3 = quantile(scorebigl, probs = 0.75))
+```
