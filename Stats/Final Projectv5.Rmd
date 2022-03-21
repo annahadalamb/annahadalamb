@@ -1,0 +1,236 @@
+---
+title: "Final Project - Anna Lamb"
+output:
+  html_document:
+    df_print: paged
+---
+
+Relationship between trust in media and time spent online
+
+Research Question: Does the number of hours spent online per week impact a respondent's trust in media? 
+
+```{r}
+library(haven)
+library(tidyverse)
+library(stargazer)
+library(dplyr)
+library(naniar)
+library(corrplot)
+library(ggpubr)
+library(ggplot2)
+
+gss <- read_dta("~/Desktop/MBDS/BDS 522/Final Project/2021_stata/gss2021.dta")
+
+#Create binary 'media' variable
+#collapse partyid into 4 categories
+gssclean <- gss %>%
+  mutate(media = case_when(trmedia == 0 ~ 1,
+                           trmedia == 1 ~ 1,
+                           trmedia == 2 ~ 1,
+                           trmedia == 3 ~ 1,
+                           trmedia == 4 ~ 1,
+                           trmedia == 5 ~ 0,
+                           trmedia == 6 ~ 0,
+                           trmedia == 7 ~ 0,
+                           trmedia == 8 ~ 0,
+                           trmedia == 9 ~ 0,
+                           trmedia == 10 ~ 0),
+         demrep = case_when(partyid == 0 ~ "dem",
+                            partyid == 1 ~ "dem",
+                            partyid == 2 ~ "ind",
+                            partyid == 3 ~ "ind",
+                            partyid == 4 ~ "ind",
+                            partyid == 5 ~ "gop",
+                            partyid == 6 ~ "gop",
+                            partyid == 7 ~ "other"),
+         demrepnum = case_when(demrep == "dem" ~ 0,
+                               demrep == "ind" ~ 1,
+                               demrep == "gop" ~ 2,
+                               demrep == "other" ~ 3),
+         male = if_else(sex == 1, 1, 0)) 
+
+gssclean2 <- gssclean %>% select(media, trmedia, wwwhr, demrep, demrepnum, news, male)  %>% drop_na()
+
+```
+
+# REMOVE OUTLIERS 
+
+```{r}
+gssclean %>% ggplot(aes(y= wwwhr)) + geom_boxplot() 
+gssclean %>% summarise(max = max(wwwhr, na.rm = TRUE))
+168/7
+
+#Using the Interquartile Range to Create Outlier Fences
+gssclean %>%  
+  summarise(mean = mean(wwwhr, na.rm=TRUE),
+    med = median(wwwhr, na.rm =TRUE),
+            sd = sd(wwwhr, na.rm =TRUE),
+            q1 = quantile(wwwhr, probs = 0.25, na.rm =TRUE),
+            q3 = quantile(wwwhr, probs = 0.75, na.rm =TRUE),
+            IQR = q3 - q1)
+
+#excluded observations
+17*3
+20+51
+1706-1676
+
+gssclean2 <- gssclean2 %>% filter(wwwhr <=71)
+
+```
+
+# MISSINGNESS
+
+```{r}
+
+gssvisualize <- gssclean %>% select(media, wwwhr, demrep, news, male)
+vis_miss(gssvisualize)
+
+```
+
+
+# EXPLORATORY ANALYSIS
+
+```{r}
+#summary statistis of trust in media 
+table(gssclean2$trmedia)
+table(gssclean2$media)
+
+gssclean2 %>%  
+  summarise(med = median(trmedia, na.rm =TRUE),
+            sd = sd(trmedia, na.rm =TRUE),
+            q1 = quantile(trmedia, probs = 0.25, na.rm =TRUE),
+            q3 = quantile(trmedia, probs = 0.75, na.rm =TRUE),
+            IQR = q3 - q1)
+
+#mode
+gssclean2 %>% filter(!is.na(trmedia)) %>% count(trmedia, sort = TRUE)
+
+#histogram
+hist(gssclean2$trmedia, main = 'Trust in media')
+
+
+```
+
+
+```{r}
+#independent variable
+gssclean2 %>%  group_by(media) %>% 
+  summarise(mean = mean(wwwhr, na.rm=TRUE),
+    med = median(wwwhr, na.rm =TRUE),
+            sd = sd(wwwhr, na.rm =TRUE),
+            q1 = quantile(wwwhr, probs = 0.25, na.rm =TRUE),
+            q3 = quantile(wwwhr, probs = 0.75, na.rm =TRUE),
+            IQR = q3 - q1)
+
+gssclean2 %>% ggplot(aes(x = wwwhr)) + geom_histogram(bins=20)
+
+```
+
+# VISUALIZATIONS 
+
+```{r}
+#DV vs. IV visualization
+ggplot(gssclean2, aes(wwwhr, factor(media)))+
+  geom_boxplot() +
+theme(axis.text.x = element_text(angle = 90), plot.title = element_text(hjust = 0.5)) +
+  labs(x = "Time Spent Online", 
+       y = "Trust Level",
+       title = "Time Spent Online - Mistrustful vs. Everyone Else")
+
+boxplot(trmedia ~ demrep, data=gssclean2, xlab="Political Party") 
+boxplot(trmedia ~ news, data=gssclean2, xlab="Frequency of Reading Newspaper") 
+boxplot(trmedia ~ male, data=gssclean2, xlab="Sex")
+boxplot(wwwhr ~ trmedia, data=gssclean2, xlab="Trust")
+
+```
+#CORRELATION TEST
+
+```{r}
+
+#Spearman correlation test
+datamatrix <- cor(gssclean2[, c("trmedia", "wwwhr")], method = "spearman", use = "pairwise.complete.obs")
+cor.test(gssclean2$trmedia, gssclean2$wwwhr, method = "spearman")
+corrplot(datamatrix, addCoef.col = 'grey', order="original", type='upper', tl.srt = 0) 
+
+ggscatter(gssclean2, x = "wwwhr", y = "trmedia", 
+          add = "reg.line", conf.int = TRUE, 
+          cor.coef = TRUE, cor.method = "spearman",
+          xlab = "Time Spent Online", ylab = "Trust in Media")
+
+```
+
+# LOGISTIC REGRESSION
+
+```{r}
+
+model1 <- glm(media ~ wwwhr, family = "binomial", na.action = na.omit, data = gssclean2)
+summary(model1)
+
+model2 <- glm(media ~ wwwhr + factor(demrep) + factor(news) + male, family = "binomial", na.action = na.omit, data = gssclean2)
+summary(model2)
+
+stargazer(model1, model2, type = "text", star.char = c("*", "**", "***"),
+          star.cutoffs = c(0.05, 0.01, 0.001), out = "results2.htm")
+```
+
+# Results: Model 1
+
+```{r}
+exp(model1$coefficients)
+
+1.5550894*0.9920303 
+#the odds of mistrusting media decreases as wwwhr increases
+(0.9920303-1)*100
+#each additional hour spent online is associated with a .8% lower odds of not trusting the media
+
+```
+
+# RESULTS: MODEL 2
+
+```{r}
+exp(model2$coefficients)
+
+exp(-0.004 )
+(0.996008-1)*100
+#one-hour increase in time spent online, we expect to see about a .4% decrease in the odds of trusting the media
+
+exp(2.749)
+(15.627 - 1)*100
+#the odds GOP respondents distrust the media is 1462% higher than the odds for democrats
+
+exp(1.041502)
+(2.83347-1)*100
+#the odds that someone who never reads the newspaper mistrusts the media is 183% higher than the odds of someone who reads it everyday
+
+exp(-0.257134)
+(0.7732646-1)*100
+#the odds a male mistrusts the media is 23% lower than the odds a female mistrusts the media
+```
+
+```{r}
+
+#Misclassifications
+gssclean2 %>% mutate(pred_logit = predict(model2),
+                     pred_prob = predict(model2, type = "response")) -> gssclean2
+prediction <- ifelse(gssclean2$pred_prob>0.5,1,0)
+y_pred <- factor(prediction, levels=c(0,1))
+table2 <- table(Predicted = prediction, Actual = gssclean2$media)
+table2
+
+#Accuracy rate
+mean(y_pred == gssclean2$media)
+
+#Error rate
+1-sum(diag(table2))/sum(table2)
+
+gssclean2 %>% 
+  ggplot() +
+  aes(x = wwwhr, y = media) +
+  geom_point() +
+  geom_smooth(method = "glm",
+              aes(x = wwwhr, y= pred_prob),
+              method.args = list(family = "binomial"),
+              se = FALSE)
+
+```
+
