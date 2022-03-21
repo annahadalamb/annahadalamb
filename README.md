@@ -1,5 +1,5 @@
 # selected-works
-Portfolio of selected coursework from the Master in Behavioral and Decision Sciences program at the University of Pennsylvania. 
+Portfolio of selected coursework required for the Master's in Behavioral and Decision Sciences at the University of Pennsylvania. 
 Courses include:
 - Design Thinking 
 - Behavioral Science Experimental Methods
